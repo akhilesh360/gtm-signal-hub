@@ -1,6 +1,7 @@
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from sqlalchemy.orm import Session
 
+from app.clay import ClaySignalPayload, clay_token_is_valid, payload_to_account, payload_to_signal
 from app.data import ACCOUNTS
 from app.database import Base, engine, get_db
 from app.ingestion import RawSignal
@@ -13,7 +14,7 @@ from app.scoring import score_account
 app = FastAPI(
     title="GTM Signal Hub",
     description="Turn account signals into explainable GTM priorities.",
-    version="0.2.0",
+    version="0.3.0",
 )
 
 
@@ -24,7 +25,7 @@ def startup() -> None:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "version": "0.2.0"}
+    return {"status": "ok", "version": "0.3.0"}
 
 
 @app.get("/accounts", response_model=list[Account])
@@ -51,6 +52,26 @@ def save_account(account: Account, db: Session = Depends(get_db)) -> Account:
             ),
         )
     return account
+
+
+@app.post("/integrations/clay/signals")
+def ingest_clay_signal(
+    payload: ClaySignalPayload,
+    db: Session = Depends(get_db),
+    x_clay_token: str | None = Header(default=None),
+) -> dict[str, object]:
+    if not clay_token_is_valid(x_clay_token):
+        raise HTTPException(status_code=401, detail="Invalid Clay webhook token")
+
+    account = payload_to_account(payload)
+    upsert_account(db, account)
+    created = ingest_signal(db, account.id, payload_to_signal(payload))
+    return {
+        "account_id": account.id,
+        "created": created,
+        "deduplicated": not created,
+        "source": "clay",
+    }
 
 
 @app.post("/accounts/{account_id}/signals")
