@@ -1,59 +1,68 @@
 # GTM Signal Hub
 
-AI-assisted go-to-market intelligence for prioritizing accounts based on real buying signals.
+AI-assisted go-to-market intelligence that turns company events into explainable account priorities and actionable **why-now** briefs.
 
-## What it does
+## The problem
 
-GTM Signal Hub ingests account-level signals such as funding, hiring activity, leadership changes, technical hiring, and product expansion. It converts those raw events into explainable opportunity scores and recommended next actions for sales, growth, and GTM teams.
+Static lead lists tell GTM teams *who* might fit. They do not explain *why now*. GTM Signal Hub treats account prioritization as a signal-processing problem: collect evidence, normalize it, score it, preserve provenance, and turn it into an actionable brief.
 
-## Why this project
-
-Most lead lists are static. Real GTM execution depends on **why now**: what changed at an account that makes outreach timely? This project treats GTM prioritization as a data + AI problem.
-
-## MVP architecture
+## System flow
 
 ```text
-Signal Sources
-  |-- Funding
-  |-- Hiring
-  |-- Leadership
-  |-- Product / Tech signals
-        |
-        v
-Ingestion + Normalization
-        |
-        v
-Signal Store
-        |
-        +--> Explainable Scoring Engine
-        |
-        +--> AI Reasoning Layer
-        |      |-- Why now?
-        |      |-- ICP fit
-        |      |-- Suggested next action
-        |
-        v
-FastAPI
-        |
-        v
-Dashboard / Integrations
+Funding / Hiring / Leadership / Product Signals
+                    |
+                    v
+          Collector / Ingestion Layer
+                    |
+          normalize + deduplicate
+                    |
+                    v
+          PostgreSQL Signal Store
+                    |
+          +---------+----------+
+          |                    |
+          v                    v
+ Explainable Scoring      Reasoning Layer
+  recency/confidence      why now / angle
+          |                    |
+          +---------+----------+
+                    v
+                  FastAPI
+                    |
+          +---------+----------+
+          |                    |
+       Dashboard          Integrations
 ```
 
-## Current MVP
+## What is implemented
 
-- FastAPI service
-- Typed account and signal models
+### Phase 1 — scoring foundation
+- FastAPI service and Swagger docs
+- Typed Pydantic account/signal contracts
 - Explainable 0-100 opportunity scoring
-- Recency-aware signal weighting
-- Sample seed data
-- REST endpoints for scoring and ranked accounts
-- Unit tests
-- Docker support
-- GitHub Actions CI
+- Signal recency decay + confidence weighting
+- Evidence-level score breakdown
+- Unit tests, Docker, GitHub Actions CI
 
-## Scoring model
+### Phase 2 — production-oriented data layer
+- SQLAlchemy persistence
+- PostgreSQL support with SQLite local fallback
+- Account + signal relational models
+- Normalized collector input contract
+- SHA-256 signal fingerprints for idempotent ingestion
+- Duplicate signal protection
+- Repeatable seed pipeline
+- Docker Compose PostgreSQL environment
 
-The first version intentionally uses deterministic scoring so the ranking is auditable before adding LLM-based reasoning.
+### Phase 3 — GTM intelligence APIs
+- Evidence-grounded `why_now` reasoning
+- Recommended outreach angle based on strongest signal
+- Explicit `reasoning_mode` so deterministic logic is never misrepresented as an LLM call
+- Account opportunity brief endpoint
+- Dashboard summary endpoint
+- Persistent account and signal ingestion APIs
+
+## Signal scoring
 
 | Signal | Base weight |
 |---|---:|
@@ -64,57 +73,83 @@ The first version intentionally uses deterministic scoring so the ranking is aud
 | Product expansion | 15 |
 | Generic hiring signal | 10 |
 
-Signals decay with age and are capped at a score of 100. The API also returns the evidence used to produce each score.
+Final contribution is based on:
 
-## Run locally
+```text
+base_weight x recency_multiplier x confidence
+```
+
+Scores are capped at 100 and classified as `hot`, `warm`, or `watch`.
+
+## API
+
+```text
+GET  /health
+GET  /accounts
+POST /accounts
+POST /accounts/{account_id}/signals
+GET  /accounts/ranked
+GET  /accounts/{account_id}/brief
+GET  /dashboard
+POST /score
+```
+
+The `/accounts/{account_id}/brief` response combines the deterministic score, evidence, why-now explanation, and recommended outreach angle.
+
+## Run locally — fastest path
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+python -m app.seed
 uvicorn app.main:app --reload
 ```
 
-Open `http://localhost:8000/docs` for Swagger.
+Open `http://localhost:8000/docs`.
 
-## Example endpoints
-
-```text
-GET  /health
-GET  /accounts
-GET  /accounts/ranked
-POST /score
-```
-
-## Run tests
+## Run with PostgreSQL
 
 ```bash
-pytest
+docker compose up --build
 ```
 
-## Docker
+Then seed the API container/database as needed and open `http://localhost:8000/docs`.
+
+## Tests
 
 ```bash
-docker build -t gtm-signal-hub .
-docker run -p 8000:8000 gtm-signal-hub
+PYTHONPATH=. python -m pytest -q
 ```
 
-## Roadmap
+## Engineering decisions
 
-- [ ] PostgreSQL + SQLAlchemy persistence
-- [ ] Scheduled signal collectors
-- [ ] Company enrichment connectors
-- [ ] LLM-generated `why_now`, evidence summary, and outreach angle
-- [ ] Confidence / provenance tracking
-- [ ] Account timeline and score history
-- [ ] React/Next.js signal dashboard
-- [ ] CRM / Slack integrations
-- [ ] Evaluation dataset for AI-generated recommendations
-- [ ] Observability, retries, idempotency, and production deployment
+**Deterministic before generative.** Ranking is auditable and testable. An LLM can enrich the recommendation layer later without controlling the source-of-truth score.
 
-## Portfolio talking points
+**Evidence first.** Every score retains the signals that contributed to it rather than returning an unexplained model number.
 
-This project demonstrates GTM engineering, data engineering, backend/API design, AI system design, feature engineering, explainability, testing, and production-oriented software practices in one end-to-end system.
+**Idempotent ingestion.** Collector output receives a stable fingerprint so retries do not silently create duplicate buying signals.
+
+**Provider-ready AI boundary.** The reasoning response contract is separated from scoring. A production LLM provider can be introduced without rewriting the core ranking engine.
+
+## Next phases
+
+- [ ] Real public signal collector: company careers / job-posting changes
+- [ ] Funding/news collector with source provenance
+- [ ] Scheduled collectors + retries/backoff
+- [ ] OpenAI or Bedrock structured reasoning provider
+- [ ] Prompt/evaluation dataset for `why_now` quality
+- [ ] React/Next.js visual dashboard
+- [ ] Account timeline and score-history tables
+- [ ] CRM webhook / Slack alert integration
+- [ ] OpenTelemetry metrics and structured logging
+- [ ] Cloud deployment + live demo URL
+
+## Interview / portfolio story
+
+GTM Signal Hub demonstrates an end-to-end system across **GTM engineering, data engineering, backend engineering, AI system design, feature engineering, explainability, idempotent pipelines, APIs, persistence, testing, and containerized deployment**.
+
+A useful design discussion is the separation between deterministic opportunity ranking and generative reasoning: the model can help explain and operationalize evidence without becoming an opaque source of truth for the score.
 
 ---
 
