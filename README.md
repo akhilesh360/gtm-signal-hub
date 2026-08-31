@@ -6,61 +6,74 @@ AI-assisted go-to-market intelligence that turns company events into explainable
 
 Static lead lists tell GTM teams *who* might fit. They do not explain *why now*. GTM Signal Hub treats account prioritization as a signal-processing problem: collect evidence, normalize it, score it, preserve provenance, and turn it into an actionable brief.
 
-## System flow
+## Architecture
 
 ```text
-Funding / Hiring / Leadership / Product Signals
-                    |
-                    v
-          Collector / Ingestion Layer
-                    |
-          normalize + deduplicate
-                    |
-                    v
-          PostgreSQL Signal Store
-                    |
-          +---------+----------+
-          |                    |
-          v                    v
- Explainable Scoring      Reasoning Layer
-  recency/confidence      why now / angle
-          |                    |
-          +---------+----------+
-                    v
-                  FastAPI
-                    |
-          +---------+----------+
-          |                    |
-       Dashboard          Integrations
+Clay / Funding / Hiring / Leadership / Product Signals
+                         |
+                         v
+              Collector + Webhook Layer
+                         |
+                normalize + dedupe
+                         |
+                         v
+               PostgreSQL / SQLite
+                         |
+             +-----------+-----------+
+             |                       |
+             v                       v
+    Deterministic Scoring      Reasoning Layer
+    recency + confidence       OpenAI optional
+             |                 safe fallback
+             +-----------+-----------+
+                         v
+                       FastAPI
+                         |
+             +-----------+-----------+
+             |                       |
+             v                       v
+     Streamlit Dashboard       Integrations
+     ranking + briefs          Clay / future CRM
 ```
 
-## What is implemented
+## Implemented phases
 
 ### Phase 1 — scoring foundation
-- FastAPI service and Swagger docs
-- Typed Pydantic account/signal contracts
-- Explainable 0-100 opportunity scoring
-- Signal recency decay + confidence weighting
+- FastAPI + typed Pydantic contracts
+- Explainable 0-100 scoring
+- Recency decay + confidence weighting
 - Evidence-level score breakdown
 - Unit tests, Docker, GitHub Actions CI
 
 ### Phase 2 — production-oriented data layer
 - SQLAlchemy persistence
-- PostgreSQL support with SQLite local fallback
+- PostgreSQL with SQLite local fallback
 - Account + signal relational models
-- Normalized collector input contract
-- SHA-256 signal fingerprints for idempotent ingestion
-- Duplicate signal protection
-- Repeatable seed pipeline
-- Docker Compose PostgreSQL environment
+- SHA-256 signal fingerprints
+- Idempotent ingestion and duplicate protection
+- Repeatable seed pipeline + Docker Compose
 
 ### Phase 3 — GTM intelligence APIs
-- Evidence-grounded `why_now` reasoning
-- Recommended outreach angle based on strongest signal
-- Explicit `reasoning_mode` so deterministic logic is never misrepresented as an LLM call
-- Account opportunity brief endpoint
-- Dashboard summary endpoint
-- Persistent account and signal ingestion APIs
+- Evidence-grounded `why_now`
+- Recommended outreach angle
+- Opportunity brief + dashboard APIs
+- Persistent account and signal ingestion
+
+### Phase 4 — integrations + visual demo
+- Clay-compatible webhook ingestion
+- Stable account IDs derived from company domain
+- Optional webhook-token protection
+- Streamlit visual dashboard
+- Ranked account table + KPI cards
+- Interactive opportunity briefs
+
+### Phase 5 — AI reasoning + evaluation
+- Optional OpenAI reasoning provider
+- Deterministic scoring remains source of truth
+- Provider failures safely fall back to deterministic reasoning
+- Explicit `reasoning_mode` in API output
+- Tests verifying evidence-grounded fallback behavior
+- `.env.example` with no committed secrets
 
 ## Signal scoring
 
@@ -73,11 +86,7 @@ Funding / Hiring / Leadership / Product Signals
 | Product expansion | 15 |
 | Generic hiring signal | 10 |
 
-Final contribution is based on:
-
-```text
-base_weight x recency_multiplier x confidence
-```
+`contribution = base_weight × recency_multiplier × confidence`
 
 Scores are capped at 100 and classified as `hot`, `warm`, or `watch`.
 
@@ -88,33 +97,53 @@ GET  /health
 GET  /accounts
 POST /accounts
 POST /accounts/{account_id}/signals
+POST /integrations/clay/signals
 GET  /accounts/ranked
 GET  /accounts/{account_id}/brief
 GET  /dashboard
 POST /score
 ```
 
-The `/accounts/{account_id}/brief` response combines the deterministic score, evidence, why-now explanation, and recommended outreach angle.
-
-## Run locally — fastest path
+## Run locally
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env
 python -m app.seed
 uvicorn app.main:app --reload
 ```
 
-Open `http://localhost:8000/docs`.
-
-## Run with PostgreSQL
+In another terminal:
 
 ```bash
-docker compose up --build
+streamlit run dashboard.py
 ```
 
-Then seed the API container/database as needed and open `http://localhost:8000/docs`.
+API docs: `http://localhost:8000/docs`
+
+Dashboard: `http://localhost:8501`
+
+## Optional AI reasoning
+
+The app works without an AI key. When `OPENAI_API_KEY` is configured, opportunity briefs can use the provider-backed reasoning layer. If the provider is unavailable or returns invalid output, the app falls back to deterministic evidence-grounded reasoning instead of breaking account ranking.
+
+No API key should ever be committed to this repository.
+
+## Clay workflow
+
+See `docs/clay-setup.md` for the complete mapping. The intended demo flow is:
+
+```text
+Clay target accounts
+ -> enrich company / job activity
+ -> classify buying signal
+ -> POST signal to GTM Signal Hub
+ -> deduplicate + persist
+ -> recompute account priority
+ -> dashboard + why-now brief
+```
 
 ## Tests
 
@@ -122,34 +151,34 @@ Then seed the API container/database as needed and open `http://localhost:8000/d
 PYTHONPATH=. python -m pytest -q
 ```
 
-## Engineering decisions
+## Engineering principles
 
-**Deterministic before generative.** Ranking is auditable and testable. An LLM can enrich the recommendation layer later without controlling the source-of-truth score.
+**Deterministic before generative.** The LLM explains evidence; it does not secretly determine the source-of-truth score.
 
-**Evidence first.** Every score retains the signals that contributed to it rather than returning an unexplained model number.
+**Evidence first.** Scores and recommendations retain their supporting signals.
 
-**Idempotent ingestion.** Collector output receives a stable fingerprint so retries do not silently create duplicate buying signals.
+**Idempotent ingestion.** Collector retries do not create duplicate buying events.
 
-**Provider-ready AI boundary.** The reasoning response contract is separated from scoring. A production LLM provider can be introduced without rewriting the core ranking engine.
+**Graceful degradation.** External AI/provider failures do not take down ranking.
 
-## Next phases
+**Demo without secrets.** SQLite + deterministic reasoning make the entire core system runnable locally without paid infrastructure.
 
-- [ ] Real public signal collector: company careers / job-posting changes
-- [ ] Funding/news collector with source provenance
-- [ ] Scheduled collectors + retries/backoff
-- [ ] OpenAI or Bedrock structured reasoning provider
-- [ ] Prompt/evaluation dataset for `why_now` quality
-- [ ] React/Next.js visual dashboard
-- [ ] Account timeline and score-history tables
-- [ ] CRM webhook / Slack alert integration
-- [ ] OpenTelemetry metrics and structured logging
-- [ ] Cloud deployment + live demo URL
+## Next
 
-## Interview / portfolio story
+- [ ] Deploy API + PostgreSQL
+- [ ] Deploy dashboard and publish live demo URL
+- [ ] Connect a real Clay table to the deployed webhook
+- [ ] Add public careers/job-posting collector
+- [ ] Add score-history/account-timeline tables
+- [ ] Add Slack/CRM hot-account alerts
+- [ ] Add larger golden evaluation dataset for AI recommendations
+- [ ] Structured logging + OpenTelemetry
 
-GTM Signal Hub demonstrates an end-to-end system across **GTM engineering, data engineering, backend engineering, AI system design, feature engineering, explainability, idempotent pipelines, APIs, persistence, testing, and containerized deployment**.
+## Interview story
 
-A useful design discussion is the separation between deterministic opportunity ranking and generative reasoning: the model can help explain and operationalize evidence without becoming an opaque source of truth for the score.
+GTM Signal Hub demonstrates **GTM engineering + data engineering + backend engineering + applied AI** in one system: signal ingestion, enrichment integration, idempotent pipelines, persistence, explainable feature scoring, provider-backed reasoning, evaluation, APIs, and a visual decision surface.
+
+The key architecture choice is intentionally separating **ranking from generation**: deterministic logic decides priority while AI converts the supporting evidence into a concise, actionable GTM recommendation.
 
 ---
 
