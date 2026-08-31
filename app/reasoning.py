@@ -1,3 +1,4 @@
+from app.llm import get_llm_provider
 from app.models import Account, AccountScore, SignalType
 
 
@@ -15,12 +16,7 @@ class ReasoningResult(dict):
     """JSON-friendly GTM reasoning payload."""
 
 
-def explain_opportunity(account: Account, score: AccountScore) -> ReasoningResult:
-    """Create deterministic, evidence-grounded GTM reasoning.
-
-    This fallback deliberately avoids pretending an LLM was called. A provider-backed
-    implementation can replace it later while preserving the same response contract.
-    """
+def deterministic_explanation(account: Account, score: AccountScore) -> ReasoningResult:
     if not score.evidence:
         return ReasoningResult(
             why_now="No meaningful recent signal is available yet.",
@@ -33,14 +29,26 @@ def explain_opportunity(account: Account, score: AccountScore) -> ReasoningResul
     evidence_summary = [
         f"{item.title} (+{item.contribution:g} points)" for item in score.evidence[:3]
     ]
-    why_now = (
-        f"{account.name} is a {score.tier} account with a {score.score:g}/100 score. "
-        f"The strongest current trigger is: {strongest.title}."
-    )
-
     return ReasoningResult(
-        why_now=why_now,
+        why_now=(
+            f"{account.name} is a {score.tier} account with a {score.score:g}/100 score. "
+            f"The strongest current trigger is: {strongest.title}."
+        ),
         outreach_angle=ACTION_BY_SIGNAL[strongest.signal_type],
         evidence_summary=evidence_summary,
         reasoning_mode="deterministic",
     )
+
+
+def explain_opportunity(account: Account, score: AccountScore) -> ReasoningResult:
+    """Use optional provider reasoning, with a safe deterministic fallback."""
+    provider = get_llm_provider()
+    if provider is not None:
+        try:
+            return ReasoningResult(**provider.explain(account, score))
+        except Exception:
+            # A provider outage must never make account ranking unavailable.
+            fallback = deterministic_explanation(account, score)
+            fallback["reasoning_mode"] = "deterministic_fallback"
+            return fallback
+    return deterministic_explanation(account, score)
