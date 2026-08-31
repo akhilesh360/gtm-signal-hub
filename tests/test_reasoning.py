@@ -1,26 +1,32 @@
 from datetime import datetime, timezone
 
 from app.models import Account, Signal, SignalType
-from app.reasoning import explain_opportunity
+from app.reasoning import deterministic_explanation
 from app.scoring import score_account
 
 
-def test_reasoning_is_grounded_in_top_signal():
+def test_reasoning_is_grounded_in_strongest_evidence():
     account = Account(
-        id="reason",
-        name="Reason Co",
-        domain="reason.example",
+        id="acme",
+        name="Acme",
+        domain="acme.example",
         signals=[
             Signal(
                 type=SignalType.FUNDING,
-                title="Raised Series A",
+                title="Raised Series B",
                 observed_at=datetime.now(timezone.utc),
+                confidence=1.0,
             )
         ],
     )
-    score = score_account(account)
-    result = explain_opportunity(account, score)
-
-    assert "Raised Series A" in result["why_now"]
+    result = deterministic_explanation(account, score_account(account))
+    assert "Raised Series B" in result["why_now"]
     assert result["reasoning_mode"] == "deterministic"
-    assert result["evidence_summary"]
+    assert len(result["evidence_summary"]) == 1
+
+
+def test_no_signal_account_does_not_invent_reasoning():
+    account = Account(id="quiet", name="Quiet Co", domain="quiet.example")
+    result = deterministic_explanation(account, score_account(account))
+    assert "No meaningful recent signal" in result["why_now"]
+    assert result["evidence_summary"] == []
