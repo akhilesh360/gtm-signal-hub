@@ -48,3 +48,21 @@ class AccountScore(BaseModel):
     tier: str
     why_now: str
     evidence: List[ScoreBreakdown]
+
+
+class OpportunityBrief(BaseModel):
+    account: Account
+    score: AccountScore
+    why_now: str
+    outreach_angle: str
+    evidence_summary: List[str]
+    reasoning_mode: str
+
+
+class DashboardSummary(BaseModel):
+    total_accounts: int
+    hot_accounts: int
+    warm_accounts: int
+    watch_accounts: int
+    total_signals: int
+    top_accounts: List[AccountScore]
